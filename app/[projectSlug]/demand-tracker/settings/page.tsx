@@ -440,6 +440,28 @@ function GroupsTab({ config, onSave, saving }: {
     onSave({ keywordGroups: updated });
   }
 
+  // Explicitly handle Enter in textareas — some browsers/React controlled components
+  // can swallow newlines. This manually inserts '\n' at cursor position.
+  function handleTextareaKeyDown(
+    e: React.KeyboardEvent<HTMLTextAreaElement>,
+    setter: React.Dispatch<React.SetStateAction<Record<string, string>>>,
+    groupId: string,
+  ) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const ta = e.currentTarget;
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      const val = ta.value;
+      const newVal = val.substring(0, start) + '\n' + val.substring(end);
+      setter(prev => ({ ...prev, [groupId]: newVal }));
+      // Restore cursor after React re-render
+      requestAnimationFrame(() => {
+        ta.selectionStart = ta.selectionEnd = start + 1;
+      });
+    }
+  }
+
   function handleSeedBlur(groupId: string) {
     const seeds = (seedTexts[groupId] || '').split('\n').map(s => s.trim()).filter(Boolean);
     updateGroup(groupId, { seedTerms: seeds });
@@ -541,6 +563,7 @@ function GroupsTab({ config, onSave, saving }: {
             <textarea
               value={seedTexts[group.id] ?? group.seedTerms.join('\n')}
               onChange={e => setSeedTexts(prev => ({ ...prev, [group.id]: e.target.value }))}
+              onKeyDown={e => handleTextareaKeyDown(e, setSeedTexts, group.id)}
               onBlur={() => handleSeedBlur(group.id)}
               placeholder="e.g. running shoes"
               rows={3}
@@ -555,6 +578,7 @@ function GroupsTab({ config, onSave, saving }: {
             <textarea
               value={excludeTexts[group.id] ?? (group.excludeTerms || []).join('\n')}
               onChange={e => setExcludeTexts(prev => ({ ...prev, [group.id]: e.target.value }))}
+              onKeyDown={e => handleTextareaKeyDown(e, setExcludeTexts, group.id)}
               onBlur={() => handleExcludeBlur(group.id)}
               placeholder="e.g. nike, adidas"
               rows={2}

@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+:root {
+  --bg-primary: #111111;
+  --bg-card: #1D1D1D;
+  --bg-card-hover: #252525;
+  --bg-input: #161616;
+  --text-primary: #FFFFFF;
+  --text-secondary: #B8B8B8;
+  --text-muted: #888888;
+  --accent: #FBDB1E;
+  --accent-hover: #FFDE02;
+  --border: #2A2A2A;
+  --border-subtle: #222222;
+  --error: #E53935;
+  --success: #4CAF50;
+  --info: #2196F3;
+}
+
+@theme inline {
+  --color-bg-primary: var(--bg-primary);
+  --color-bg-card: var(--bg-card);
+  --color-bg-card-hover: var(--bg-card-hover);
+  --color-bg-input: var(--bg-input);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
+  --color-error: var(--error);
+  --color-success: var(--success);
+  --color-info: var(--info);
+  --font-sans: 'Figtree', system-ui, sans-serif;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}

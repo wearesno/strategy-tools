@@ -67,9 +67,9 @@ export function ShareOfSearch({ data, groups, subtitle }: Props) {
               fontSize: '12px',
             }}
             labelStyle={{ color: '#FFFFFF', fontWeight: 600, marginBottom: 4 }}
-            formatter={(value: number, name: string) => {
-              const group = groups.find(g => g.id === name);
-              return [`${(value * 100).toFixed(1)}%`, group?.name || name];
+            formatter={(value, name) => {
+              const group = groups.find(g => g.id === (name as string));
+              return [`${(Number(value) * 100).toFixed(1)}%`, group?.name || (name as string)];
             }}
           />
           <Legend

@@ -13,7 +13,7 @@ function yoyCard(label: string, metric: YoYMetric) {
 }
 
 export function SummaryCards({ stats }: { stats: SummaryStats }) {
-  const cards = [
+  const cards: { label: string; value: string; detail: string; positive?: boolean }[] = [
     {
       label: 'Total Volume',
       value: formatNumber(stats.totalVolume),

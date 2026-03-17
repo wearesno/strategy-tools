@@ -63,7 +63,7 @@ export function GroupComparisonBar({ data, groups }: Props) {
               borderRadius: '8px',
               fontSize: '12px',
             }}
-            formatter={(value: number, name: string) => [formatNumber(value), name || 'Total Volume']}
+            formatter={(value) => [formatNumber(value as number), 'Total Volume']}
           />
           <Bar dataKey="total" radius={[6, 6, 0, 0]}>
             {groupTotals.map((entry) => (

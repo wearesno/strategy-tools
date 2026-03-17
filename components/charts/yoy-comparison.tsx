@@ -38,7 +38,7 @@ export function YoYComparison({ data }: Props) {
       [String(currentYear)]: currentVal,
       ...(previousYear ? { [String(previousYear)]: prevVal } : {}),
       change,
-    };
+    } as Record<string, string | number | null>;
   });
 
   // Filter to only months that have data
@@ -77,7 +77,7 @@ export function YoYComparison({ data }: Props) {
                 borderRadius: '8px',
                 fontSize: '12px',
               }}
-              formatter={(value: number, name: string) => [formatNumber(value), name]}
+              formatter={(value, name) => [formatNumber(value as number), name as string]}
             />
             <Legend wrapperStyle={{ fontSize: '12px', color: '#B8B8B8' }} />
             <Line

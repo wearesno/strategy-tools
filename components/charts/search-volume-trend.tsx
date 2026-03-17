@@ -127,12 +127,8 @@ export function SearchVolumeTrend({ data, groups }: Props) {
           <Legend
             wrapperStyle={{ fontSize: '12px', color: '#B8B8B8' }}
             // Filter out trend lines from legend
-            payload={groups.map(g => ({
-              value: g.name,
-              type: 'line' as const,
-              color: g.color,
-              id: g.id,
-            }))}
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            {...{ payload: groups.map(g => ({ value: g.name, type: 'line' as const, color: g.color, id: g.id })) } as any}
           />
           {/* Main data lines */}
           {groups.map(group => (

@@ -13,6 +13,12 @@ import { GroupComparisonBar } from '@/components/charts/group-comparison-bar';
 import { ShareOfSearch } from '@/components/charts/share-of-search';
 import { YoYComparison } from '@/components/charts/yoy-comparison';
 import { KeywordTable } from '@/components/charts/keyword-table';
+import {
+  loadConfig as loadConfigFromClient,
+  saveConfig as saveConfigToClient,
+  loadData as loadDataFromClient,
+  saveData as saveDataToClient,
+} from '@/lib/client-store';
 
 type Tab = 'trend' | 'comparison' | 'share' | 'yoy' | 'keywords';
 
@@ -27,16 +33,56 @@ export default function DemandTrackerDashboard() {
   const [selectedType, setSelectedType] = useState<KeywordGroupType | 'all'>('all');
 
   useEffect(() => {
-    Promise.all([
-      fetch(`/api/projects/${projectSlug}`).then(r => r.ok ? r.json() : null),
-      fetch(`/api/projects/${projectSlug}/demand-tracker/config`).then(r => r.ok ? r.json() : null),
-      fetch(`/api/projects/${projectSlug}/demand-tracker/sheets`).then(r => r.ok ? r.json() : null),
-    ]).then(([proj, cfg, sheetData]) => {
+    async function load() {
+      // Load from client stores first (instant, survives Vercel cold starts)
+      const [cachedConfig, cachedData] = await Promise.all([
+        Promise.resolve(loadConfigFromClient(projectSlug)),
+        loadDataFromClient(projectSlug),
+      ]);
+
+      // Always fetch project from API (small, needed for name)
+      let proj: Project | null = null;
+      try {
+        const projRes = await fetch(`/api/projects/${projectSlug}`);
+        proj = projRes.ok ? await projRes.json() : null;
+      } catch {
+        // API unavailable
+      }
+
+      // Use cached data if available, otherwise try API as fallback
+      let cfg = cachedConfig;
+      let kwData = cachedData;
+
+      if (!cfg) {
+        try {
+          const cfgRes = await fetch(`/api/projects/${projectSlug}/demand-tracker/config`);
+          if (cfgRes.ok) {
+            cfg = await cfgRes.json();
+            if (cfg) saveConfigToClient(projectSlug, cfg);
+          }
+        } catch {
+          // API unavailable
+        }
+      }
+
+      if (!kwData) {
+        try {
+          const dataRes = await fetch(`/api/projects/${projectSlug}/demand-tracker/sheets`);
+          if (dataRes.ok) {
+            kwData = await dataRes.json();
+            if (kwData) await saveDataToClient(projectSlug, kwData);
+          }
+        } catch {
+          // API unavailable
+        }
+      }
+
       setProject(proj);
       setConfig(cfg);
-      setData(sheetData);
+      setData(kwData);
       setLoading(false);
-    });
+    }
+    load();
   }, [projectSlug]);
 
   // Get unique group types present in config

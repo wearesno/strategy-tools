@@ -22,12 +22,24 @@ export async function POST(
   { params }: { params: Promise<{ projectSlug: string }> }
 ) {
   const { projectSlug } = await params;
-  const config = getDTConfig(projectSlug);
+  const body = await request.json().catch(() => ({}));
+
+  // Accept config from request body (client-side store) or fall back to server store
+  let config = getDTConfig(projectSlug);
+  if (body.sheetSources?.length > 0) {
+    config = {
+      projectSlug,
+      sheetUrl: body.sheetSources[0]?.sheetUrl || config?.sheetUrl || '',
+      sheetId: body.sheetSources[0]?.sheetId || config?.sheetId || '',
+      sheetSources: body.sheetSources,
+      keywordGroups: body.keywordGroups || config?.keywordGroups || [],
+      parsedAt: config?.parsedAt || null,
+    };
+  }
   if (!config) {
     return NextResponse.json({ error: 'Demand Tracker not configured for this project' }, { status: 404 });
   }
 
-  const body = await request.json().catch(() => ({}));
   const sources = config.sheetSources || [];
 
   // Legacy fallback: no sheetSources, use old sheetId directly

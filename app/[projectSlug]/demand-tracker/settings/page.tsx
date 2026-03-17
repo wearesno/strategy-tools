@@ -6,6 +6,13 @@ import Link from 'next/link';
 import type { DemandTrackerConfig, KeywordGroup, KeywordGroupType, SheetSource } from '@/lib/types';
 import { CHART_COLORS } from '@/lib/types';
 import { generateId, extractSheetId } from '@/lib/utils';
+import { applyAllGroupMatches } from '@/lib/keyword-matcher';
+import {
+  saveConfig as saveConfigToClient,
+  loadConfig as loadConfigFromClient,
+  saveData as saveDataToClient,
+  loadData as loadDataFromClient,
+} from '@/lib/client-store';
 
 export default function DemandTrackerSettingsPage() {
   const { projectSlug } = useParams<{ projectSlug: string }>();
@@ -16,34 +23,81 @@ export default function DemandTrackerSettingsPage() {
   const [fetchResult, setFetchResult] = useState<string>('');
 
   useEffect(() => {
-    fetch(`/api/projects/${projectSlug}/demand-tracker/config`)
-      .then(r => r.ok ? r.json() : null)
-      .then(setConfig);
+    async function load() {
+      // Try client store first (instant, survives Vercel cold starts)
+      const cached = loadConfigFromClient(projectSlug);
+      if (cached) {
+        setConfig(cached);
+      }
+
+      // Also try API (may have fresher data in dev, or provides initial mock data)
+      try {
+        const res = await fetch(`/api/projects/${projectSlug}/demand-tracker/config`);
+        if (res.ok) {
+          const apiConfig = await res.json();
+          // Use API config if no client cache, or if API has fresher parsedAt
+          if (!cached || (apiConfig.parsedAt && (!cached.parsedAt || apiConfig.parsedAt > cached.parsedAt))) {
+            setConfig(apiConfig);
+            saveConfigToClient(projectSlug, apiConfig);
+          }
+        } else if (!cached) {
+          // No config anywhere — show empty state
+          setConfig(null);
+        }
+      } catch {
+        // API unavailable, use cached if we have it
+      }
+    }
+    load();
   }, [projectSlug]);
 
   const saveConfig = useCallback(async (updates: Partial<DemandTrackerConfig>) => {
     setSaving(true);
-    const res = await fetch(`/api/projects/${projectSlug}/demand-tracker/config`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates),
-    });
-    const updated = await res.json();
-    setConfig(updated);
+
+    // Optimistically update local state and client store
+    const merged = config ? { ...config, ...updates } : null;
+    if (merged) {
+      setConfig(merged);
+      saveConfigToClient(projectSlug, merged);
+    }
+
+    // Also save to server (best-effort, may fail on Vercel cold starts)
+    try {
+      const res = await fetch(`/api/projects/${projectSlug}/demand-tracker/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+      if (res.ok) {
+        const serverConfig = await res.json();
+        setConfig(serverConfig);
+        saveConfigToClient(projectSlug, serverConfig);
+      }
+    } catch {
+      // Server save failed — client store is the source of truth
+    }
     setSaving(false);
-  }, [projectSlug]);
+  }, [projectSlug, config]);
 
   async function handleFetchSheet() {
+    if (!config) return;
     setFetching(true);
     setFetchResult('');
     try {
+      // Send config in request body so server doesn't need to read from store
       const res = await fetch(`/api/projects/${projectSlug}/demand-tracker/sheets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({
+          sheetSources: config.sheetSources,
+          keywordGroups: config.keywordGroups,
+        }),
       });
       const data = await res.json();
       if (res.ok) {
+        // Save keyword data to client store (IndexedDB)
+        await saveDataToClient(projectSlug, data);
+
         const stats = data.mergeStats;
         if (stats && stats.totalBeforeDedup !== stats.totalAfterDedup) {
           setFetchResult(
@@ -57,9 +111,18 @@ export default function DemandTrackerSettingsPage() {
             `across ${data.monthColumns?.length || 0} months.`
           );
         }
-        // Refresh config
-        const configRes = await fetch(`/api/projects/${projectSlug}/demand-tracker/config`);
-        setConfig(await configRes.json());
+
+        // Update config with parsedAt and per-source stats
+        const updatedConfig = {
+          ...config,
+          parsedAt: new Date().toISOString(),
+          sheetSources: config.sheetSources.map(s => {
+            const sourceKeywords = data.keywords?.filter?.(() => true); // all from merged result
+            return { ...s, lastFetchedAt: new Date().toISOString(), keywordCount: sourceKeywords?.length || s.keywordCount };
+          }),
+        };
+        setConfig(updatedConfig);
+        saveConfigToClient(projectSlug, updatedConfig);
       } else {
         setFetchResult(`Error: ${data.error}`);
       }
@@ -70,16 +133,33 @@ export default function DemandTrackerSettingsPage() {
   }
 
   async function handleApplyMatches() {
+    if (!config) return;
     setFetching(true);
     setFetchResult('');
     try {
-      const res = await fetch(`/api/projects/${projectSlug}/demand-tracker/match`, { method: 'POST' });
-      const data = await res.json();
-      if (res.ok) {
-        setFetchResult(`Matched ${data.matched}/${data.total} keywords. ${data.unmatched} ungrouped.`);
-      } else {
-        setFetchResult(`Error: ${data.error}`);
+      // Run matching client-side — no server round-trip needed
+      const data = await loadDataFromClient(projectSlug);
+      if (!data) {
+        setFetchResult('Error: No keyword data. Fetch the sheets first.');
+        setFetching(false);
+        return;
       }
+
+      // Deep copy groups so applyAllGroupMatches can mutate matchedKeywords
+      const groupsCopy = config.keywordGroups.map(g => ({ ...g, matchedKeywords: [...g.matchedKeywords] }));
+      const keywords = applyAllGroupMatches(data.keywords, groupsCopy);
+      const updatedData = { ...data, keywords };
+
+      // Save updated data to client store
+      await saveDataToClient(projectSlug, updatedData);
+
+      // Update config with new matchedKeywords counts
+      const updatedConfig = { ...config, keywordGroups: groupsCopy };
+      setConfig(updatedConfig);
+      saveConfigToClient(projectSlug, updatedConfig);
+
+      const assigned = keywords.filter(kw => kw.assignedGroupId).length;
+      setFetchResult(`Matched ${assigned}/${keywords.length} keywords. ${keywords.length - assigned} ungrouped.`);
     } catch {
       setFetchResult('Failed to apply matches.');
     }
@@ -319,6 +399,14 @@ function GroupsTab({ config, onSave, saving }: {
   const [groups, setGroups] = useState<KeywordGroup[]>(config.keywordGroups);
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  // Local textarea state — allows line breaks while typing, saves on blur
+  const [seedTexts, setSeedTexts] = useState<Record<string, string>>(
+    Object.fromEntries(config.keywordGroups.map(g => [g.id, g.seedTerms.join('\n')]))
+  );
+  const [excludeTexts, setExcludeTexts] = useState<Record<string, string>>(
+    Object.fromEntries(config.keywordGroups.map(g => [g.id, (g.excludeTerms || []).join('\n')]))
+  );
+
   function addGroup() {
     const colorIndex = groups.length % CHART_COLORS.length;
     const newGroup: KeywordGroup = {
@@ -333,6 +421,8 @@ function GroupsTab({ config, onSave, saving }: {
     const updated = [...groups, newGroup];
     setGroups(updated);
     setEditingId(newGroup.id);
+    setSeedTexts(prev => ({ ...prev, [newGroup.id]: '' }));
+    setExcludeTexts(prev => ({ ...prev, [newGroup.id]: '' }));
     onSave({ keywordGroups: updated });
   }
 
@@ -345,7 +435,19 @@ function GroupsTab({ config, onSave, saving }: {
   function removeGroup(id: string) {
     const updated = groups.filter(g => g.id !== id);
     setGroups(updated);
+    setSeedTexts(prev => { const next = { ...prev }; delete next[id]; return next; });
+    setExcludeTexts(prev => { const next = { ...prev }; delete next[id]; return next; });
     onSave({ keywordGroups: updated });
+  }
+
+  function handleSeedBlur(groupId: string) {
+    const seeds = (seedTexts[groupId] || '').split('\n').map(s => s.trim()).filter(Boolean);
+    updateGroup(groupId, { seedTerms: seeds });
+  }
+
+  function handleExcludeBlur(groupId: string) {
+    const excludes = (excludeTexts[groupId] || '').split('\n').map(s => s.trim()).filter(Boolean);
+    updateGroup(groupId, { excludeTerms: excludes });
   }
 
   return (
@@ -437,11 +539,9 @@ function GroupsTab({ config, onSave, saving }: {
               Include Terms <span className="font-normal text-text-muted/60">(one per line — keywords must contain one of these)</span>
             </label>
             <textarea
-              value={group.seedTerms.join('\n')}
-              onChange={e => {
-                const seeds = e.target.value.split('\n').map(s => s.trim()).filter(Boolean);
-                updateGroup(group.id, { seedTerms: seeds });
-              }}
+              value={seedTexts[group.id] ?? group.seedTerms.join('\n')}
+              onChange={e => setSeedTexts(prev => ({ ...prev, [group.id]: e.target.value }))}
+              onBlur={() => handleSeedBlur(group.id)}
               placeholder="e.g. running shoes"
               rows={3}
               className="w-full bg-bg-input border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm placeholder:text-text-muted focus:outline-none focus:border-accent resize-y"
@@ -453,11 +553,9 @@ function GroupsTab({ config, onSave, saving }: {
               Exclude Terms <span className="font-normal text-text-muted/60">(one per line — keywords containing these are removed)</span>
             </label>
             <textarea
-              value={(group.excludeTerms || []).join('\n')}
-              onChange={e => {
-                const excludes = e.target.value.split('\n').map(s => s.trim()).filter(Boolean);
-                updateGroup(group.id, { excludeTerms: excludes });
-              }}
+              value={excludeTexts[group.id] ?? (group.excludeTerms || []).join('\n')}
+              onChange={e => setExcludeTexts(prev => ({ ...prev, [group.id]: e.target.value }))}
+              onBlur={() => handleExcludeBlur(group.id)}
               placeholder="e.g. nike, adidas"
               rows={2}
               className="w-full bg-bg-input border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm placeholder:text-text-muted focus:outline-none focus:border-accent resize-y"

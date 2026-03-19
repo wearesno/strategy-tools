@@ -398,14 +398,25 @@ function GroupsTab({ config, onSave, saving }: {
 }) {
   const [groups, setGroups] = useState<KeywordGroup[]>(config.keywordGroups);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Local draft strings for the seed/exclude inputs so they're controlled
+  const [seedDrafts, setSeedDrafts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(config.keywordGroups.map(g => [g.id, g.seedTerms.join(', ')]))
+  );
+  const [excludeDrafts, setExcludeDrafts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(config.keywordGroups.map(g => [g.id, (g.excludeTerms || []).join(', ')]))
+  );
 
-  // Local textarea state — allows line breaks while typing, saves on blur
-  const [seedTexts, setSeedTexts] = useState<Record<string, string>>(
-    Object.fromEntries(config.keywordGroups.map(g => [g.id, g.seedTerms.join('\n')]))
-  );
-  const [excludeTexts, setExcludeTexts] = useState<Record<string, string>>(
-    Object.fromEntries(config.keywordGroups.map(g => [g.id, (g.excludeTerms || []).join('\n')]))
-  );
+  function commitSeeds(groupId: string) {
+    const raw = seedDrafts[groupId] || '';
+    const seeds = raw.split(',').map(s => s.trim()).filter(Boolean);
+    updateGroup(groupId, { seedTerms: seeds });
+  }
+
+  function commitExcludes(groupId: string) {
+    const raw = excludeDrafts[groupId] || '';
+    const excludes = raw.split(',').map(s => s.trim()).filter(Boolean);
+    updateGroup(groupId, { excludeTerms: excludes });
+  }
 
   function addGroup() {
     const colorIndex = groups.length % CHART_COLORS.length;
@@ -421,8 +432,8 @@ function GroupsTab({ config, onSave, saving }: {
     const updated = [...groups, newGroup];
     setGroups(updated);
     setEditingId(newGroup.id);
-    setSeedTexts(prev => ({ ...prev, [newGroup.id]: '' }));
-    setExcludeTexts(prev => ({ ...prev, [newGroup.id]: '' }));
+    setSeedDrafts(prev => ({ ...prev, [newGroup.id]: '' }));
+    setExcludeDrafts(prev => ({ ...prev, [newGroup.id]: '' }));
     onSave({ keywordGroups: updated });
   }
 
@@ -435,41 +446,7 @@ function GroupsTab({ config, onSave, saving }: {
   function removeGroup(id: string) {
     const updated = groups.filter(g => g.id !== id);
     setGroups(updated);
-    setSeedTexts(prev => { const next = { ...prev }; delete next[id]; return next; });
-    setExcludeTexts(prev => { const next = { ...prev }; delete next[id]; return next; });
     onSave({ keywordGroups: updated });
-  }
-
-  // Explicitly handle Enter in textareas — some browsers/React controlled components
-  // can swallow newlines. This manually inserts '\n' at cursor position.
-  function handleTextareaKeyDown(
-    e: React.KeyboardEvent<HTMLTextAreaElement>,
-    setter: React.Dispatch<React.SetStateAction<Record<string, string>>>,
-    groupId: string,
-  ) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const ta = e.currentTarget;
-      const start = ta.selectionStart;
-      const end = ta.selectionEnd;
-      const val = ta.value;
-      const newVal = val.substring(0, start) + '\n' + val.substring(end);
-      setter(prev => ({ ...prev, [groupId]: newVal }));
-      // Restore cursor after React re-render
-      requestAnimationFrame(() => {
-        ta.selectionStart = ta.selectionEnd = start + 1;
-      });
-    }
-  }
-
-  function handleSeedBlur(groupId: string) {
-    const seeds = (seedTexts[groupId] || '').split('\n').map(s => s.trim()).filter(Boolean);
-    updateGroup(groupId, { seedTerms: seeds });
-  }
-
-  function handleExcludeBlur(groupId: string) {
-    const excludes = (excludeTexts[groupId] || '').split('\n').map(s => s.trim()).filter(Boolean);
-    updateGroup(groupId, { excludeTerms: excludes });
   }
 
   return (
@@ -558,31 +535,29 @@ function GroupsTab({ config, onSave, saving }: {
 
           <div>
             <label className="block text-xs font-medium text-text-muted mb-1.5">
-              Include Terms <span className="font-normal text-text-muted/60">(one per line — keywords must contain one of these)</span>
+              Include Terms <span className="font-normal text-text-muted/60">(comma-separated — keywords must contain one of these)</span>
             </label>
-            <textarea
-              value={seedTexts[group.id] ?? group.seedTerms.join('\n')}
-              onChange={e => setSeedTexts(prev => ({ ...prev, [group.id]: e.target.value }))}
-              onKeyDown={e => handleTextareaKeyDown(e, setSeedTexts, group.id)}
-              onBlur={() => handleSeedBlur(group.id)}
-              placeholder="e.g. running shoes"
-              rows={3}
-              className="w-full bg-bg-input border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm placeholder:text-text-muted focus:outline-none focus:border-accent resize-y"
+            <input
+              value={seedDrafts[group.id] ?? group.seedTerms.join(', ')}
+              onChange={e => setSeedDrafts(prev => ({ ...prev, [group.id]: e.target.value }))}
+              onBlur={() => commitSeeds(group.id)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.currentTarget.blur(); } }}
+              placeholder="e.g. running shoes, sneakers, trainers"
+              className="w-full bg-bg-input border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm placeholder:text-text-muted focus:outline-none focus:border-accent"
             />
           </div>
 
           <div className="mt-3">
             <label className="block text-xs font-medium text-text-muted mb-1.5">
-              Exclude Terms <span className="font-normal text-text-muted/60">(one per line — keywords containing these are removed)</span>
+              Exclude Terms <span className="font-normal text-text-muted/60">(comma-separated — keywords containing these are removed)</span>
             </label>
-            <textarea
-              value={excludeTexts[group.id] ?? (group.excludeTerms || []).join('\n')}
-              onChange={e => setExcludeTexts(prev => ({ ...prev, [group.id]: e.target.value }))}
-              onKeyDown={e => handleTextareaKeyDown(e, setExcludeTexts, group.id)}
-              onBlur={() => handleExcludeBlur(group.id)}
+            <input
+              value={excludeDrafts[group.id] ?? (group.excludeTerms || []).join(', ')}
+              onChange={e => setExcludeDrafts(prev => ({ ...prev, [group.id]: e.target.value }))}
+              onBlur={() => commitExcludes(group.id)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.currentTarget.blur(); } }}
               placeholder="e.g. nike, adidas"
-              rows={2}
-              className="w-full bg-bg-input border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm placeholder:text-text-muted focus:outline-none focus:border-accent resize-y"
+              className="w-full bg-bg-input border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm placeholder:text-text-muted focus:outline-none focus:border-accent"
             />
           </div>
 
